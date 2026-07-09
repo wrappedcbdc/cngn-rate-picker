@@ -135,6 +135,82 @@ npm test           # run the test suite (node --test)
 npm run typecheck  # type-check without emitting
 ```
 
+## Contributing
+
+Contributions are welcome — new providers, bug fixes, docs, and test coverage
+alike. The codebase is small and dependency-free on purpose; please keep it
+that way.
+
+### Getting started
+
+You need **Node 18+** and npm. Then:
+
+```bash
+git clone <your-fork-url>
+cd naira-rate-picker
+npm install        # dev dependencies only (typescript, tsx)
+npm test           # everything should be green before you start
+```
+
+### Project layout
+
+```
+src/
+├── index.ts       # public API barrel — every export goes through here
+├── picker.ts      # ExchangeRatePicker: failover, cache, circuit breaker
+├── types.ts       # shared contracts (Rate, RateProvider, ProviderQuote)
+├── errors.ts      # ProviderError, AllProvidersFailedError
+├── http.ts        # httpJson + toPrice helpers used by all providers
+└── providers/     # one file per upstream API adapter
+test/              # node:test suites (no network — use fake providers)
+examples/          # runnable usage examples
+```
+
+### Adding a provider
+
+This is the most common contribution. The checklist:
+
+1. Create `src/providers/<name>.ts` implementing `RateProvider` — one class,
+   one `getUsdtPriceInNgn(ctx)` method. Use `httpJson` and `toPrice` from
+   `../http.js` rather than calling `fetch` directly, so the injected fetch,
+   timeout signal, and price validation apply automatically.
+2. Make the base URL a constructor parameter with a default (see
+   `QuidaxProvider`) so tests can point it at a mock.
+3. Export the class (and any options type) from `src/index.ts`.
+4. Add tests in `test/`. Tests must not hit the network — inject a fake
+   `fetch` via the picker options or call the provider with a stubbed
+   `ProviderContext`.
+5. Document it in the "Built-in providers" table above, including the rate
+   type (market vs official) and any reliability caveats. Unofficial or
+   undocumented endpoints must be clearly flagged, like `BinanceP2PProvider`.
+
+Remember the one canonical rule: providers report a single number — **NGN per
+1 USDT** — as a finite, positive value, and throw on any failure. The picker
+handles everything else (retries, failover, caching, inversion).
+
+### Pull request guidelines
+
+- Before opening a PR, make sure all three pass locally:
+  `npm run typecheck`, `npm test`, and `npm run build`.
+- Keep PRs focused — one provider or one fix per PR is much easier to review
+  than a grab bag.
+- **No new runtime dependencies.** Zero-dependency is a feature of this
+  library; PRs that add one will be asked to remove it. Dev dependencies are
+  negotiable if they clearly pay for themselves.
+- Every behaviour change needs a test that fails without the change.
+- Match the existing style: ES modules with explicit `.js` extensions in
+  import paths (required by `NodeNext` resolution), strict TypeScript, and
+  doc comments on anything exported.
+- If you're changing the public API or the failover semantics, open an issue
+  first so the design can be discussed before you invest the time.
+
+### Reporting bugs
+
+Open an issue with the library version, Node version, a minimal reproduction,
+and — if a provider is involved — the raw upstream payload if you have it
+(`Rate.raw` is kept for exactly this). Please **do not** include API keys or
+account details in issues.
+
 ## Disclaimer
 
 Rates are sourced from third-party public endpoints and provided as-is for
