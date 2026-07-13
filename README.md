@@ -189,7 +189,7 @@ that way.
 You need **Node 18+** and npm. Then:
 
 ```bash
-git clone <your-fork-url>
+git clone https://github.com/wrappedcbdc/cngn-rate-picker.git
 cd cngn-rate-picker
 npm install        # dev dependencies only (typescript, tsx)
 npm test           # everything should be green before you start
