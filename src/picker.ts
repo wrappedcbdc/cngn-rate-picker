@@ -1,27 +1,20 @@
-import type { CurrencyCode, Rate, RateProvider } from "./types.js";
-import { AllProvidersFailedError, ProviderError } from "./errors.js";
+import type { CurrencyCode, Rate, RateProvider, RateSource } from "./types.js";
+import { AllProvidersFailedError, ProviderError, ThresholdNotMetError } from "./errors.js";
 
 export interface CircuitBreakerOptions {
-  /** Consecutive failures before a provider is temporarily skipped. */
   failureThreshold: number;
-  /** How long (ms) to skip a tripped provider before trying it again. */
   cooldownMs: number;
 }
 
 export interface RatePickerOptions {
-  /** Providers in priority order. Index 0 is tried first. */
   providers: RateProvider[];
-  /** Per-provider timeout in ms. Default: 5000. */
   timeoutMs?: number;
-  /** Cache the canonical rate for this many ms. 0 disables caching. Default: 0. */
   cacheTtlMs?: number;
-  /** Circuit breaker config, or `false` to disable. Default: 3 failures / 30s. */
+  threshold?: number;
+  parallel?: boolean;
   circuitBreaker?: CircuitBreakerOptions | false;
-  /** Injectable fetch (proxying, mocking, instrumentation). Default: global fetch. */
   fetch?: typeof fetch;
-  /** Called once per provider failure (observability). */
   onProviderError?: (error: ProviderError) => void;
-  /** Called when a provider successfully supplies a rate. */
   onSuccess?: (rate: Rate) => void;
 }
 
@@ -31,27 +24,21 @@ interface Health {
 }
 
 interface CanonicalRate {
-  price: number; // NGN per 1 USDT
+  price: number; // NGN per 1 USDT (TWAP across the used sources when threshold > 1)
   provider: string;
   timestamp: number;
   raw?: unknown;
+  sources: RateSource[];
 }
 
-/**
- * ExchangeRatePicker
- *
- * A facade over an ordered list of providers. On each request it walks the
- * chain (Chain of Responsibility) and returns the first successful quote,
- * transparently failing over when a provider errors, times out, or is held
- * open by the circuit breaker. Results can be cached with a TTL.
- *
- * Providers themselves are interchangeable strategies (Strategy pattern), each
- * adapting a different upstream API (Adapter pattern) to one interface.
- */
+type RawSource = Omit<RateSource, "usedInAverage">;
+
 export class ExchangeRatePicker {
   private readonly providers: RateProvider[];
   private readonly timeoutMs: number;
   private readonly cacheTtlMs: number;
+  private readonly threshold: number;
+  private readonly parallel: boolean;
   private readonly breaker: CircuitBreakerOptions | false;
   private readonly fetchImpl: typeof fetch;
   private readonly onProviderError?: (error: ProviderError) => void;
@@ -67,6 +54,8 @@ export class ExchangeRatePicker {
     this.providers = options.providers;
     this.timeoutMs = options.timeoutMs ?? 5000;
     this.cacheTtlMs = options.cacheTtlMs ?? 0;
+    this.threshold = options.threshold ?? 1;
+    this.parallel = options.parallel ?? false;
     this.breaker =
       options.circuitBreaker === undefined
         ? { failureThreshold: 3, cooldownMs: 30_000 }
@@ -75,25 +64,31 @@ export class ExchangeRatePicker {
     this.onProviderError = options.onProviderError;
     this.onSuccess = options.onSuccess;
 
+    if (!Number.isInteger(this.threshold) || this.threshold < 1) {
+      throw new Error("threshold must be a positive integer");
+    }
+    if (this.threshold > this.providers.length) {
+      throw new Error(
+        `threshold (${this.threshold}) cannot exceed the number of configured providers (${this.providers.length})`,
+      );
+    }
     if (!this.fetchImpl) {
       throw new Error("No fetch implementation available; pass `fetch` in options");
     }
   }
 
-  /** 1 USDT expressed in NGN. */
   async getUsdtToNgn(): Promise<Rate> {
     return this.getRate("USDT", "NGN");
   }
 
-  /** 1 NGN expressed in USDT. */
   async getNgnToUsdt(): Promise<Rate> {
     return this.getRate("NGN", "USDT");
   }
 
-  /** Generic accessor for either direction. */
   async getRate(base: CurrencyCode, quote: CurrencyCode): Promise<Rate> {
     if (base === quote) {
-      return this.buildRate(base, quote, 1, { price: 1, provider: "identity", timestamp: Date.now() }, false);
+      const identity: CanonicalRate = { price: 1, provider: "identity", timestamp: Date.now(), sources: [] };
+      return this.buildRate(base, quote, 1, identity, false);
     }
     const canonical = await this.resolveCanonical();
     // canonical.price is NGN per USDT.
@@ -101,7 +96,6 @@ export class ExchangeRatePicker {
     return this.buildRate(base, quote, rate, canonical, this.servedFromCache);
   }
 
-  /** Convert an amount and return both the converted value and the rate used. */
   async convert(
     amount: number,
     base: CurrencyCode,
@@ -111,12 +105,9 @@ export class ExchangeRatePicker {
     return { amount: amount * rate.rate, rate };
   }
 
-  /** Force the next call to re-fetch instead of using the cache. */
   clearCache(): void {
     this.cache = null;
   }
-
-  // --- internals -------------------------------------------------------------
 
   private servedFromCache = false;
 
@@ -127,7 +118,15 @@ export class ExchangeRatePicker {
     }
     this.servedFromCache = false;
 
+    const canonical = this.parallel ? await this.resolveParallel() : await this.resolveSequential();
+    if (this.cacheTtlMs > 0) this.cache = canonical;
+    return canonical;
+  }
+
+  private async resolveSequential(): Promise<CanonicalRate> {
     const errors: ProviderError[] = [];
+    const successes: RawSource[] = [];
+
     for (const provider of this.providers) {
       if (this.isOpen(provider.name)) {
         errors.push(new ProviderError(provider.name, "skipped (circuit open)"));
@@ -136,14 +135,7 @@ export class ExchangeRatePicker {
       try {
         const quote = await this.callWithTimeout(provider);
         this.recordSuccess(provider.name);
-        const canonical: CanonicalRate = {
-          price: quote.price,
-          provider: provider.name,
-          timestamp: Date.now(),
-          raw: quote.raw,
-        };
-        if (this.cacheTtlMs > 0) this.cache = canonical;
-        return canonical;
+        successes.push({ provider: provider.name, price: quote.price, raw: quote.raw, fetchedAt: Date.now() });
       } catch (err) {
         const pErr =
           err instanceof ProviderError
@@ -154,7 +146,94 @@ export class ExchangeRatePicker {
         errors.push(pErr);
       }
     }
-    throw new AllProvidersFailedError(errors);
+
+    return this.settle(successes, errors);
+  }
+
+  private async resolveParallel(): Promise<CanonicalRate> {
+    const errors: ProviderError[] = [];
+    const candidates = this.providers.filter((provider) => {
+      if (this.isOpen(provider.name)) {
+        errors.push(new ProviderError(provider.name, "skipped (circuit open)"));
+        return false;
+      }
+      return true;
+    });
+
+    if (candidates.length === 0) {
+      return this.settle([], errors);
+    }
+
+    const results = await Promise.allSettled(
+      candidates.map(async (provider) => {
+        const quote = await this.callWithTimeout(provider);
+        return { quote, fetchedAt: Date.now() };
+      }),
+    );
+
+    const successes: RawSource[] = [];
+    results.forEach((result, i) => {
+      const provider = candidates[i];
+      if (!provider) return;
+      if (result.status === "fulfilled") {
+        this.recordSuccess(provider.name);
+        successes.push({
+          provider: provider.name,
+          price: result.value.quote.price,
+          raw: result.value.quote.raw,
+          fetchedAt: result.value.fetchedAt,
+        });
+      } else {
+        const err = result.reason;
+        const pErr =
+          err instanceof ProviderError
+            ? err
+            : new ProviderError(provider.name, (err as Error)?.message ?? "unknown error", err);
+        this.recordFailure(provider.name);
+        this.onProviderError?.(pErr);
+        errors.push(pErr);
+      }
+    });
+
+    return this.settle(successes, errors);
+  }
+
+  private settle(successes: RawSource[], errors: ProviderError[]): CanonicalRate {
+    if (successes.length === 0) throw new AllProvidersFailedError(errors);
+    if (successes.length < this.threshold) {
+      throw new ThresholdNotMetError(this.threshold, successes.length, errors);
+    }
+
+    const used = successes.slice(0, this.threshold);
+    const usedNames = new Set(used.map((s) => s.provider));
+    const sources: RateSource[] = successes.map((s) => ({ ...s, usedInAverage: usedNames.has(s.provider) }));
+
+    return {
+      price: this.computeTwap(used),
+      provider: used.map((s) => s.provider).join(", "),
+      timestamp: Date.now(),
+      raw: used.length === 1 ? used[0]?.raw : undefined,
+      sources,
+    };
+  }
+
+  private computeTwap(sources: RawSource[]): number {
+    const first = sources[0];
+    if (sources.length === 1 && first) return first.price;
+
+    const sorted = [...sources].sort((a, b) => a.fetchedAt - b.fetchedAt);
+    const gaps: number[] = [];
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const current = sorted[i];
+      const next = sorted[i + 1];
+      if (current && next) gaps.push(Math.max(next.fetchedAt - current.fetchedAt, 1));
+    }
+    const meanGap = gaps.reduce((sum, g) => sum + g, 0) / gaps.length;
+    const weights = [...gaps, meanGap];
+
+    const weightedSum = sorted.reduce((sum, s, i) => sum + s.price * (weights[i] ?? meanGap), 0);
+    const totalWeight = weights.reduce((sum, w) => sum + w, 0);
+    return weightedSum / totalWeight;
   }
 
   private async callWithTimeout(provider: RateProvider) {
@@ -185,12 +264,12 @@ export class ExchangeRatePicker {
       timestamp: canonical.timestamp,
       cached,
       raw: canonical.raw,
+      sources: canonical.sources,
     };
     if (!cached) this.onSuccess?.(result);
     return result;
   }
 
-  // --- circuit breaker -------------------------------------------------------
 
   private getHealth(name: string): Health {
     let h = this.health.get(name);

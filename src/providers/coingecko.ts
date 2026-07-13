@@ -5,13 +5,6 @@ interface CoinGeckoSimplePrice {
   tether?: { ngn?: number };
 }
 
-/**
- * CoinGecko — free, key-less "simple price" endpoint. Returns the aggregated
- * market price of Tether (USDT) denominated in NGN. Good, independent second
- * source. Public tier is rate-limited, so keep it as a fallback, not a hot path.
- *
- * Docs: https://www.coingecko.com/en/api/documentation
- */
 export class CoinGeckoProvider implements RateProvider {
   readonly name = "coingecko";
 

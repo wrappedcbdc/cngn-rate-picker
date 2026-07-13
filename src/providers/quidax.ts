@@ -3,42 +3,47 @@ import { httpJson, toPrice } from "../http.js";
 
 interface QuidaxTickerResponse {
   status: string;
-  data: {
-    ticker: {
-      last: string;
-      buy: string;
-      sell: string;
-    };
-  };
+  data?: Record<
+    string,
+    {
+      ticker: {
+        high: string | number;
+        vol: string | number;
+        last: string | number;
+        low: string | number;
+        buy: string | number;
+        sell: string | number;
+        open: string | number;
+      };
+    }
+  >;
 }
 
-/**
- * Quidax — a Nigerian exchange with a live USDT/NGN spot market and a public,
- * key-less ticker endpoint. This is the closest thing to a real-time
- * "market" naira rate and is the recommended primary provider.
- *
- * Docs: https://docs.quidax.io
- */
+const MARKET = "cngnusdt";
+
 export class QuidaxProvider implements RateProvider {
   readonly name = "quidax";
 
-  constructor(private readonly baseUrl = "https://www.quidax.io/api/v1") {}
+  constructor(
+    private readonly baseUrl = "https://openapi.quidax.io/exchange-open-api/api/v1",
+  ) {}
 
   async getUsdtPriceInNgn(ctx: ProviderContext): Promise<ProviderQuote> {
     const body = await httpJson<QuidaxTickerResponse>(
-      `${this.baseUrl}/markets/usdtngn/ticker`,
+      `${this.baseUrl}/markets/tickers/${MARKET}`,
       { ctx },
     );
-    const ticker = body?.data?.ticker;
+    const ticker = body?.data?.[MARKET]?.ticker;
     if (!ticker) throw new Error("unexpected Quidax response shape");
 
-    // Prefer last-traded price; fall back to the bid/ask mid.
-    let price: number;
+    // Prefer last-traded price; fall back to the bid/ask mid. Both are
+    // USDT-per-cNGN, so invert to get NGN-per-USDT.
+    let usdtPerCngn: number;
     try {
-      price = toPrice(ticker.last);
+      usdtPerCngn = toPrice(ticker.last);
     } catch {
-      price = (toPrice(ticker.buy) + toPrice(ticker.sell)) / 2;
+      usdtPerCngn = (toPrice(ticker.buy) + toPrice(ticker.sell)) / 2;
     }
-    return { price, raw: body };
+    return { price: 1 / usdtPerCngn, raw: body };
   }
 }

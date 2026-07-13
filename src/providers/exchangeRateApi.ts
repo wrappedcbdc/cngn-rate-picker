@@ -6,17 +6,6 @@ interface ErApiResponse {
   rates: Record<string, number>;
 }
 
-/**
- * ExchangeRate-API (open, key-less endpoint). Returns the *official* USD→NGN
- * rate, used here as a proxy for USDT (USDT ≈ USD).
- *
- * Caveat: this is the interbank/official rate, which in Nigeria can sit well
- * below the crypto/parallel market rate. Treat this as a last-resort fallback
- * so your app degrades to *a* number rather than failing outright — not as a
- * source of truth for the street rate.
- *
- * Docs: https://www.exchangerate-api.com/docs/free
- */
 export class ExchangeRateApiProvider implements RateProvider {
   readonly name = "exchangerate-api";
 

@@ -1,7 +1,7 @@
 {
-  "name": "naira-rate-picker",
-  "version": "0.1.0",
-  "description": "Resilient NGN <-> USDT exchange rate library with multiple providers and automatic failover.",
+  "name": "cngn-rate-picker",
+  "version": "0.1.1",
+  "description": "Resilient cNGN <-> USDT exchange rate library with multiple providers and automatic failover.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -11,7 +11,11 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=18"
   },
@@ -19,7 +23,8 @@
     "build": "tsc -p tsconfig.json",
     "test": "node --import tsx --test test/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "example": "node --import tsx examples/basic.ts"
   },
   "keywords": [
     "naira",
@@ -34,6 +39,7 @@
   ],
   "license": "MIT",
   "devDependencies": {
+    "@types/node": "^26.1.1",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3"
   }
