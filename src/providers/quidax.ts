@@ -1,4 +1,4 @@
-import type { ProviderContext, ProviderQuote, RateProvider } from "../types.js";
+import type { ProviderContext, ProviderQuote, RateProvider, UsdStablecoin } from "../types.js";
 import { httpJson, toPrice } from "../http.js";
 
 interface QuidaxTickerResponse {
@@ -19,31 +19,54 @@ interface QuidaxTickerResponse {
   >;
 }
 
-const MARKET = "cngnusdt";
+const DEFAULT_BASE_URL = "https://openapi.quidax.io/exchange-open-api/api/v1";
+
+export interface QuidaxProviderOptions {
+  /** USD stablecoin side of the cNGN market (default "USDT"). */
+  asset?: UsdStablecoin;
+  /**
+   * Explicit Quidax market id. Defaults to `cngn` + the asset lowercased
+   * (e.g. "cngnusdt", "cngnusdc") — the request fails over cleanly if Quidax
+   * doesn't list that market.
+   */
+  market?: string;
+  baseUrl?: string;
+}
 
 export class QuidaxProvider implements RateProvider {
   readonly name = "quidax";
+  readonly asset: UsdStablecoin;
+  private readonly market: string;
+  private readonly baseUrl: string;
 
-  constructor(
-    private readonly baseUrl = "https://openapi.quidax.io/exchange-open-api/api/v1",
-  ) {}
+  constructor(options: QuidaxProviderOptions | string = {}) {
+    const opts = typeof options === "string" ? { baseUrl: options } : options;
+    this.asset = opts.asset ?? "USDT";
+    this.market = opts.market ?? `cngn${this.asset.toLowerCase()}`;
+    this.baseUrl = opts.baseUrl ?? DEFAULT_BASE_URL;
+  }
 
-  async getUsdtPriceInNgn(ctx: ProviderContext): Promise<ProviderQuote> {
+  async getPriceInNgn(ctx: ProviderContext): Promise<ProviderQuote> {
     const body = await httpJson<QuidaxTickerResponse>(
-      `${this.baseUrl}/markets/tickers/${MARKET}`,
+      `${this.baseUrl}/markets/tickers/${this.market}`,
       { ctx },
     );
-    const ticker = body?.data?.[MARKET]?.ticker;
-    if (!ticker) throw new Error("unexpected Quidax response shape");
+    const ticker = body?.data?.[this.market]?.ticker;
+    if (!ticker) throw new Error(`unexpected Quidax response shape for market "${this.market}"`);
 
     // Prefer last-traded price; fall back to the bid/ask mid. Both are
-    // USDT-per-cNGN, so invert to get NGN-per-USDT.
-    let usdtPerCngn: number;
+    // <asset>-per-cNGN, so invert to get NGN-per-<asset>.
+    let assetPerCngn: number;
     try {
-      usdtPerCngn = toPrice(ticker.last);
+      assetPerCngn = toPrice(ticker.last);
     } catch {
-      usdtPerCngn = (toPrice(ticker.buy) + toPrice(ticker.sell)) / 2;
+      assetPerCngn = (toPrice(ticker.buy) + toPrice(ticker.sell)) / 2;
     }
-    return { price: 1 / usdtPerCngn, raw: body };
+    return { price: 1 / assetPerCngn, raw: body };
+  }
+
+  /** @deprecated Use {@link getPriceInNgn}; this alias quotes whatever `asset` is configured. */
+  getUsdtPriceInNgn(ctx: ProviderContext): Promise<ProviderQuote> {
+    return this.getPriceInNgn(ctx);
   }
 }

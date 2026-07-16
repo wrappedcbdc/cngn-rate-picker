@@ -1,11 +1,12 @@
 # cngn-rate-picker
 
-Resilient **NGN ⇄ USDT** exchange-rate library for TypeScript. Query multiple
-rate providers behind one interface: every eligible provider is queried on
-every request, and the top-priority successes are combined into a single
-time-weighted rate — with every individual provider's quote still visible in
-the response. Zero runtime dependencies, works in Node 18+ and modern
-browsers.
+Resilient **NGN ⇄ USD-stablecoin** exchange-rate library for TypeScript —
+**USDT** and **USDC** out of the box, and any future USD-backed stablecoin
+without a library update. Query multiple rate providers behind one interface:
+every eligible provider is queried on every request, and the top-priority
+successes are combined into a single time-weighted rate — with every
+individual provider's quote still visible in the response. Zero runtime
+dependencies, works in Node 18+ and modern browsers.
 
 ## Install
 
@@ -20,25 +21,73 @@ The library composes three classic patterns, each doing one job:
 | Pattern | Where | What it buys you |
 | --- | --- | --- |
 | **Strategy** | `RateProvider` interface | Providers are interchangeable. Add, remove, or reorder them without touching the picker. |
-| **Adapter** | each `*Provider` class | Each upstream API has a different response shape; the adapter normalises it to one `ProviderQuote` (`NGN per USDT`). |
+| **Adapter** | each `*Provider` class | Each upstream API has a different response shape; the adapter normalises it to one `ProviderQuote` (`NGN per 1 unit of the stablecoin`). |
 | **Scatter-Gather** | `ExchangeRatePicker` | Every eligible provider is queried on every request (scatter), and the top-priority successes are combined into one time-weighted rate (gather) — see "Threshold" below. |
 
 On top of that the picker adds a **circuit breaker** (skip a provider that keeps
 failing, retry it after a cooldown), a per-provider **timeout**, and an optional
-**TTL cache**. It acts as a **facade**: callers only see `getUsdtToNgn()`,
-`getNgnToUsdt()`, and `convert()`.
+**TTL cache**. It acts as a **facade**: callers only see
+`getStablecoinToNgn()`, `getNgnToStablecoin()`, and `convert()` (plus the
+`getUsdtToNgn()`/`getNgnToUsdt()` sugar on USDT pickers).
 
-Everything canonicalises to a single number — *NGN per 1 USDT* — so providers
-stay tiny and both conversion directions are derived in one place.
+Everything canonicalises to a single number — *NGN per 1 unit of the picker's
+stablecoin* — so providers stay tiny and both conversion directions are
+derived in one place.
+
+## Choosing your stablecoin (USDC and beyond)
+
+**One picker = one market.** A picker trades exactly one USD-backed
+stablecoin against NGN, set by the `asset` option (default `"USDT"`). This
+keeps the TWAP honest: quotes for different coins are never mixed into one
+average. Want both USDT and USDC rates? Create two pickers — they're cheap.
+
+```ts
+const usdc = new ExchangeRatePicker({
+  asset: "USDC",
+  providers: [
+    new QuidaxProvider({ asset: "USDC" }),      // cNGN/USDC market
+    new CoinGeckoProvider({ asset: "USDC" }),   // usd-coin price in NGN
+    new ExchangeRateApiProvider(),              // fiat-USD proxy — matches any picker
+  ],
+});
+
+const rate = await usdc.getStablecoinToNgn();   // NGN per 1 USDC
+await usdc.convert(50_000, "NGN", "USDC");
+```
+
+Three rules make this safe and extensible:
+
+1. **Providers declare what they quote** via an optional `asset` field
+   (default `"USDT"`). The picker throws **at construction** if a provider's
+   asset doesn't match its own — a USDC provider can't silently poison a USDT
+   average.
+2. **`"USD"` marks a fiat proxy.** A provider whose `asset` is `"USD"`
+   (e.g. `ExchangeRateApiProvider`, an official FX rate) is accepted by every
+   picker, on the assumption the stablecoin holds its peg.
+3. **New coins need no library update.** `asset` accepts any symbol
+   (`"PYUSD"`, `"FDUSD"`, …) — `"USDT"` and `"USDC"` merely get
+   autocompletion. Point the built-in providers at the new market
+   (`QuidaxProvider({ asset: "PYUSD", market: "..." })`,
+   `CoinGeckoProvider({ asset: "PYUSD", coinId: "paypal-usd" })`) or write a
+   tiny provider of your own.
+
+> Quidax listings vary: the provider builds the market id as
+> `cngn<asset-lowercased>` (e.g. `cngnusdc`) and fails over cleanly if the
+> exchange doesn't list that market. Pass `market` explicitly if the id
+> doesn't follow that pattern, and verify a market actually exists before
+> relying on it in production — as of July 2026 Quidax lists `cngnusdt` but
+> **not** `cngnusdc`, so a practical USDC picker today leans on
+> `CoinGeckoProvider({ asset: "USDC" })`, `ExchangeRateApiProvider`, and
+> `BlockradarProvider({ apiKey, asset: "USDC" })`.
 
 ## Built-in providers
 
-| Provider | Source | Rate type | Key? |
-| --- | --- | --- | --- |
-| `QuidaxProvider` | Quidax cNGN/USDT ticker | Live crypto **market** rate | No |
-| `CoinGeckoProvider` | CoinGecko simple price | Aggregated market rate | No |
-| `ExchangeRateApiProvider` | open.er-api.com USD→NGN | **Official** rate (USDT≈USD proxy) | No |
-| `BlockradarProvider` | Blockradar market benchmark (USDT/cNGN) | Best competing **Liquidity Provider** rate | Yes |
+| Provider | Source | Rate type | Assets | Key? |
+| --- | --- | --- | --- | --- |
+| `QuidaxProvider` | Quidax cNGN/&lt;asset&gt; ticker | Live crypto **market** rate | Any listed market (`asset`/`market` options) | No |
+| `CoinGeckoProvider` | CoinGecko simple price | Aggregated market rate | USDT, USDC built in; others via `coinId` | No |
+| `ExchangeRateApiProvider` | open.er-api.com USD→NGN | **Official** rate (fiat-USD proxy) | Any USD stablecoin | No |
+| `BlockradarProvider` | Blockradar market benchmark (&lt;asset&gt;/cNGN) | Best competing **Liquidity Provider** rate | Any benchmarked asset (`asset` option) | Yes |
 
 > **Choose your ordering deliberately.** In Nigeria the *official* rate can sit
 > well below the *crypto/parallel* rate. Put a market source (Quidax/CoinGecko)
@@ -66,6 +115,7 @@ new BlockradarProvider({ apiKey: process.env.BLOCKRADAR_API_KEY! });
 ```ts
 new ExchangeRatePicker({
   providers,                 // required, in priority order
+  asset: "USDT",             // the USD stablecoin this picker trades vs NGN
   timeoutMs: 5000,           // per-provider timeout
   cacheTtlMs: 0,             // 0 = no cache
   threshold: 1,              // how many (by priority) feed the TWAP; every provider is queried regardless
@@ -135,23 +185,27 @@ Failed or circuit-open providers are skipped and don't count toward
 
 ## Writing your own provider
 
-Implement one method. That's the whole contract.
+Implement one method, declare what you quote. That's the whole contract.
 
 ```ts
 import { RateProvider, ProviderContext, ProviderQuote, httpJson, toPrice } from "cngn-rate-picker";
 
 export class MyExchangeProvider implements RateProvider {
   readonly name = "my-exchange";
+  readonly asset = "USDC"; // what this provider quotes; omit for USDT, "USD" for a fiat proxy
 
-  async getUsdtPriceInNgn(ctx: ProviderContext): Promise<ProviderQuote> {
+  async getPriceInNgn(ctx: ProviderContext): Promise<ProviderQuote> {
     const body = await httpJson<{ price: string }>(
-      "https://api.my-exchange.com/usdt-ngn",
+      "https://api.my-exchange.com/usdc-ngn",
       { ctx }, // ctx carries the injected fetch + timeout signal
     );
     return { price: toPrice(body.price), raw: body };
   }
 }
 ```
+
+Pre-0.2 providers that implement `getUsdtPriceInNgn` still work and are
+treated as quoting USDT — but new providers should use `getPriceInNgn`.
 
 Drop it anywhere in the `providers` array and the averaging, breaker, cache,
 and events apply to it automatically.
@@ -214,9 +268,10 @@ examples/          # runnable usage examples
 This is the most common contribution. The checklist:
 
 1. Create `src/providers/<name>.ts` implementing `RateProvider` — one class,
-   one `getUsdtPriceInNgn(ctx)` method. Use `httpJson` and `toPrice` from
-   `../http.js` rather than calling `fetch` directly, so the injected fetch,
-   timeout signal, and price validation apply automatically.
+   one `getPriceInNgn(ctx)` method, plus an `asset` field (or an `asset`
+   option) saying which stablecoin it quotes. Use `httpJson` and `toPrice`
+   from `../http.js` rather than calling `fetch` directly, so the injected
+   fetch, timeout signal, and price validation apply automatically.
 2. Make the base URL a constructor parameter with a default (see
    `QuidaxProvider`) so tests can point it at a mock.
 3. Export the class (and any options type) from `src/index.ts`.
@@ -228,8 +283,9 @@ This is the most common contribution. The checklist:
    undocumented endpoints must be clearly flagged as such.
 
 Remember the one canonical rule: providers report a single number — **NGN per
-1 USDT** — as a finite, positive value, and throw on any failure. The picker
-handles everything else (retries, TWAP averaging, caching, inversion).
+1 unit of their declared asset** — as a finite, positive value, and throw on
+any failure. The picker handles everything else (asset matching, retries,
+TWAP averaging, caching, inversion).
 
 ### Pull request guidelines
 
@@ -256,29 +312,10 @@ account details in issues.
 
 ## Changelog
 
-### 0.1.1
-
-**Added**
-- `BlockradarProvider` — Blockradar market-benchmark rate for `USDT/cNGN` (requires an API key).
-- `threshold` and `parallel` options on `ExchangeRatePicker` for combining several providers into one time-weighted average (TWAP) rate.
-- `Rate.sources` (`RateSource[]`) — every queried provider's individual quote, each tagged with `usedInAverage`.
-- `ThresholdNotMetError`, thrown when fewer than `threshold` providers succeed.
-
-**Changed**
-- Renamed the package from `naira-rate-picker` to `cngn-rate-picker`.
-- `QuidaxProvider` now reads the `cNGN/USDT` market (previously `USDT/NGN`), matching Quidax's current endpoint and response shape.
-- `ExchangeRatePicker` now queries **every** configured provider on every call — there's no early exit. The first `threshold` successes (in provider-priority order) are combined into `rate.rate` via TWAP instead of simply returning the first success.
-
-**Removed**
-- `BinanceP2PProvider` (unofficial/unsupported Binance P2P scraping).
-
-**Fixed**
-- The `example` npm script pointed at a nonexistent `example/` directory instead of `examples/`.
-- Missing `@types/node` dev dependency caused TypeScript errors in the test suite.
-
-### 0.1.0
-
-Initial release: `ExchangeRatePicker` with `QuidaxProvider`, `CoinGeckoProvider`, `ExchangeRateApiProvider`, and `BinanceP2PProvider`, circuit breaker, per-provider timeout, and TTL cache.
+See [CHANGELOG.md](CHANGELOG.md) for the full release history. Highlights of
+**0.2.0**: USDC support, an `asset` option on the picker, provider-declared
+assets with construction-time validation, and extensibility to any future
+USD-backed stablecoin.
 
 ## Disclaimer
 

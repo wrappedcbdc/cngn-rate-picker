@@ -1,4 +1,15 @@
-import type { CurrencyCode, Rate, RateProvider, RateSource } from "./types.js";
+import type {
+  AnyRateProvider,
+  CurrencyCode,
+  LegacyRateProvider,
+  ProviderAsset,
+  ProviderContext,
+  ProviderQuote,
+  Rate,
+  RateProvider,
+  RateSource,
+  UsdStablecoin,
+} from "./types.js";
 import { AllProvidersFailedError, ProviderError, ThresholdNotMetError } from "./errors.js";
 
 export interface CircuitBreakerOptions {
@@ -7,7 +18,13 @@ export interface CircuitBreakerOptions {
 }
 
 export interface RatePickerOptions {
-  providers: RateProvider[];
+  providers: AnyRateProvider[];
+  /**
+   * The USD-backed stablecoin this picker trades against NGN (default
+   * "USDT"). Every provider must quote this asset (or fiat "USD", which is a
+   * valid proxy for any USD stablecoin) — a mismatch throws at construction.
+   */
+  asset?: UsdStablecoin;
   timeoutMs?: number;
   cacheTtlMs?: number;
   threshold?: number;
@@ -24,7 +41,7 @@ interface Health {
 }
 
 interface CanonicalRate {
-  price: number; // NGN per 1 USDT (TWAP across the used sources when threshold > 1)
+  price: number; // NGN per 1 unit of the configured asset (TWAP across the used sources when threshold > 1)
   provider: string;
   timestamp: number;
   raw?: unknown;
@@ -33,8 +50,34 @@ interface CanonicalRate {
 
 type RawSource = Omit<RateSource, "usedInAverage">;
 
+/** A provider reduced to one shape, whichever contract it implements. */
+interface NormalizedProvider {
+  readonly name: string;
+  readonly asset: ProviderAsset;
+  call(ctx: ProviderContext): Promise<ProviderQuote>;
+}
+
+function normalizeProvider(provider: AnyRateProvider): NormalizedProvider {
+  const { name } = provider;
+  const asset = (provider as Partial<RateProvider>).asset ?? "USDT";
+  const modern = provider as Partial<RateProvider>;
+  if (typeof modern.getPriceInNgn === "function") {
+    return { name, asset, call: (ctx) => modern.getPriceInNgn!(ctx) };
+  }
+  const legacy = provider as Partial<LegacyRateProvider>;
+  if (typeof legacy.getUsdtPriceInNgn === "function") {
+    return { name, asset, call: (ctx) => legacy.getUsdtPriceInNgn!(ctx) };
+  }
+  throw new Error(
+    `provider "${name}" implements neither getPriceInNgn nor getUsdtPriceInNgn`,
+  );
+}
+
 export class ExchangeRatePicker {
-  private readonly providers: RateProvider[];
+  /** The stablecoin this picker trades against NGN. */
+  readonly asset: UsdStablecoin;
+
+  private readonly providers: NormalizedProvider[];
   private readonly timeoutMs: number;
   private readonly cacheTtlMs: number;
   private readonly threshold: number;
@@ -51,7 +94,19 @@ export class ExchangeRatePicker {
     if (!options.providers?.length) {
       throw new Error("ExchangeRatePicker requires at least one provider");
     }
-    this.providers = options.providers;
+    this.asset = options.asset ?? "USDT";
+    if (!this.asset || this.asset === "NGN") {
+      throw new Error(`asset must be a USD-backed stablecoin symbol, got ${JSON.stringify(this.asset)}`);
+    }
+    this.providers = options.providers.map(normalizeProvider);
+    for (const provider of this.providers) {
+      if (provider.asset !== "USD" && provider.asset !== this.asset) {
+        throw new Error(
+          `provider "${provider.name}" quotes ${provider.asset} but this picker is configured for ${this.asset}; ` +
+            `use a matching provider or set the picker's \`asset\` option`,
+        );
+      }
+    }
     this.timeoutMs = options.timeoutMs ?? 5000;
     this.cacheTtlMs = options.cacheTtlMs ?? 0;
     this.threshold = options.threshold ?? 1;
@@ -77,22 +132,41 @@ export class ExchangeRatePicker {
     }
   }
 
+  /** NGN per 1 unit of the configured stablecoin. */
+  async getStablecoinToNgn(): Promise<Rate> {
+    return this.getRate(this.asset, "NGN");
+  }
+
+  /** Units of the configured stablecoin per 1 NGN. */
+  async getNgnToStablecoin(): Promise<Rate> {
+    return this.getRate("NGN", this.asset);
+  }
+
+  /** USDT-specific sugar: throws unless the picker's asset is "USDT". */
   async getUsdtToNgn(): Promise<Rate> {
     return this.getRate("USDT", "NGN");
   }
 
+  /** USDT-specific sugar: throws unless the picker's asset is "USDT". */
   async getNgnToUsdt(): Promise<Rate> {
     return this.getRate("NGN", "USDT");
   }
 
   async getRate(base: CurrencyCode, quote: CurrencyCode): Promise<Rate> {
+    for (const code of [base, quote]) {
+      if (code !== "NGN" && code !== this.asset) {
+        throw new Error(
+          `unsupported currency "${code}": this picker trades ${this.asset} <-> NGN`,
+        );
+      }
+    }
     if (base === quote) {
       const identity: CanonicalRate = { price: 1, provider: "identity", timestamp: Date.now(), sources: [] };
       return this.buildRate(base, quote, 1, identity, false);
     }
     const canonical = await this.resolveCanonical();
-    // canonical.price is NGN per USDT.
-    const rate = base === "USDT" ? canonical.price : 1 / canonical.price;
+    // canonical.price is NGN per 1 unit of the configured asset.
+    const rate = base === this.asset ? canonical.price : 1 / canonical.price;
     return this.buildRate(base, quote, rate, canonical, this.servedFromCache);
   }
 
@@ -236,14 +310,14 @@ export class ExchangeRatePicker {
     return weightedSum / totalWeight;
   }
 
-  private async callWithTimeout(provider: RateProvider) {
+  private async callWithTimeout(provider: NormalizedProvider) {
     const controller = new AbortController();
     const timer = setTimeout(
       () => controller.abort(new Error(`timeout after ${this.timeoutMs}ms`)),
       this.timeoutMs,
     );
     try {
-      return await provider.getUsdtPriceInNgn({ signal: controller.signal, fetch: this.fetchImpl });
+      return await provider.call({ signal: controller.signal, fetch: this.fetchImpl });
     } finally {
       clearTimeout(timer);
     }

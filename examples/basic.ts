@@ -9,7 +9,7 @@ const picker = new ExchangeRatePicker({
   providers: [
     new QuidaxProvider(),
     new CoinGeckoProvider(),
-    new ExchangeRateApiProvider(),
+    new ExchangeRateApiProvider()
   ],
   threshold: 2,
   parallel: true,

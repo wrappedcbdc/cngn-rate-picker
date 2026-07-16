@@ -1,7 +1,7 @@
 {
   "name": "cngn-rate-picker",
-  "version": "0.1.1",
-  "description": "Resilient cNGN <-> USDT exchange rate library with multiple providers and automatic failover.",
+  "version": "0.2.0",
+  "description": "Resilient cNGN <-> USD-stablecoin (USDT, USDC, and any future USD-backed coin) exchange rate library with multiple providers and automatic failover.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/wrappedcbdc/cngn-rate-picker.git"
@@ -22,6 +22,7 @@
   "files": [
     "dist",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "engines": {
@@ -32,12 +33,14 @@
     "test": "node --import tsx --test test/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prepublishOnly": "npm run build",
-    "example": "node --import tsx examples/basic.ts"
+    "example": "node --import tsx examples/usdc.ts"
   },
   "keywords": [
     "naira",
     "ngn",
     "usdt",
+    "usdc",
+    "stablecoin",
     "exchange-rate",
     "forex",
     "crypto",
