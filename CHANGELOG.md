@@ -64,20 +64,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   host does, which is what makes it usable on networks that block `bybit.com`
   at the resolver. The keyless endpoint has no documented alias, so it stays
   single-host.
-- `MexcProvider`, spot market rate from MEXC. Quotes a **TWAP of kline closes**
-  by default (`klineInterval`, default `"1m"`; `twapWindowMs`, default 1 hour;
-  `maxStalenessMs`, default 6 hours) and reads the documented ticker endpoints
-  for spot modes: `price: "last"` uses
-  [`/api/v3/ticker/price`](https://www.mexc.com/api-docs/spot-v3/market-data-endpoints/symbol-price-ticker)
-  and `"mid"`/`"bid"`/`"ask"` use
-  [`/api/v3/ticker/bookTicker`](https://www.mexc.com/api-docs/spot-v3/market-data-endpoints/symbol-order-book-ticker),
-  which also serve as the empty-window fallback (`twapFallback`, default
-  `"mid"`). Symbols are built from `asset` + `quote` (default `"NGN"`) or set
-  via `symbol`, with the inversion direction inferred from the symbol and
-  `invert` as an override. MEXC's `{"code":-1121,"msg":"invalid symbol"}` bodies
-  are surfaced verbatim instead of being flattened to an HTTP status.
-  **Caveat:** MEXC lists no NGN or cNGN pair as of 2026-08-17 (0 of 2102 spot
-  symbols), so the default `USDTNGN` symbol fails over until one is listed.
 - `describeFetchFailure` and `fetchOrDescribe` (`src/http.ts`), exported for
   custom providers that call `fetch` directly.
 - `timeWeightedAverage`, `withinWindow`, `newestPoint` and the `PricePoint`

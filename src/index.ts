@@ -27,12 +27,6 @@ export { BlockradarProvider } from "./providers/blockradar.js";
 export type { BlockradarOptions, BlockradarPriceMode } from "./providers/blockradar.js";
 export { BybitP2PProvider } from "./providers/bybitP2P.js";
 export type { BybitP2PProviderOptions } from "./providers/bybitP2P.js";
-export { MexcProvider } from "./providers/mexc.js";
-export type {
-  MexcProviderOptions,
-  MexcPriceField,
-  MexcTwapFallback,
-} from "./providers/mexc.js";
 export { TextileProvider } from "./providers/textile.js";
 export type {
   TextileProviderOptions,

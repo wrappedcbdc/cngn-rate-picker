@@ -87,7 +87,6 @@ Three rules make this safe and extensible:
 | `QuidaxProvider` | Quidax cNGN/&lt;asset&gt; kline | Live crypto **market** rate | ✅ candle closes | Any listed market (`asset`/`market` options) | No |
 | `CoinGeckoProvider` | CoinGecko market chart | Aggregated market rate | ✅ 5-min chart points | USDT, USDC built in; others via `coinId` | No |
 | `TextileProvider` | Textile Credit FX feed (&lt;asset&gt;\_NGN corridor) | Live **order-book** venue rate | ✅ cleared trades | Any published corridor (`asset`/`tickerId` options) | No |
-| `MexcProvider` | MEXC spot klines and tickers | Live crypto **market** rate | ✅ candle closes | Any listed symbol, but ⚠️ **MEXC lists no NGN pair** | No |
 | `ExchangeRateApiProvider` | open.er-api.com USD→NGN | **Official** rate (fiat-USD proxy) | ❌ no free history | Any USD stablecoin | No |
 | `BlockradarProvider` | Blockradar `/assets/rates` routes | Wallet-provider **settlement** rate (both directions averaged) | ❌ no history, cross-route average instead | Any listed asset (`asset` option) | Yes |
 | `BybitP2PProvider` | Bybit P2P &lt;asset&gt;/NGN ads | **Parallel/street** rate (fraud-filtered P2P mid) | ❌ see below | Any P2P-listed token (`asset` option) | Optional |
@@ -176,39 +175,6 @@ import { CoinGeckoProvider } from "cngn-rate-picker";
 new CoinGeckoProvider();                     // tether/NGN, 1h TWAP
 new CoinGeckoProvider({ asset: "USDC" });    // usd-coin/NGN
 new CoinGeckoProvider({ price: "spot" });    // /simple/price, pre-TWAP behaviour
-```
-
-> `MexcProvider` averages MEXC's
-> [kline series](https://www.mexc.com/api-docs/spot-v3/market-data-endpoints)
-> by default, weighting each candle's close by how long it stood.
-> `klineInterval` sets the candle size (default `"1m"`, MEXC notation) and
-> `maxStalenessMs` (default 6 h) rejects a dormant listing. `price` switches to
-> a spot read: `"last"` uses
-> [`/api/v3/ticker/price`](https://www.mexc.com/api-docs/spot-v3/market-data-endpoints/symbol-price-ticker),
-> a single scalar and the closest match to this library's one-number contract,
-> while `"mid"`, `"bid"`, and `"ask"` use
-> [`/api/v3/ticker/bookTicker`](https://www.mexc.com/api-docs/spot-v3/market-data-endpoints/symbol-order-book-ticker).
-> Symbols are `<asset><quote>` with no separator, built from `asset` + `quote`
-> (default `"NGN"`) or given outright via `symbol`; the inversion direction is
-> inferred from the symbol, with `invert` as the override. MEXC's
-> `{"code":-1121,"msg":"invalid symbol"}` error bodies are surfaced verbatim
-> rather than flattened to an HTTP status.
->
-> ⚠️ **MEXC lists no NGN or cNGN market.** As of 2026-08-17 none of its 2102
-> spot symbols contains "NGN" (it does list BRL pairs, so fiat quotes exist in
-> principle), and the default `USDTNGN` symbol returns
-> `-1121 invalid symbol`. The provider is wired up and tested so it starts
-> working the moment such a pair is listed, but **it cannot contribute an NGN
-> rate today**, and in a picker it will simply fail over. Pointing it at a
-> symbol that exists is useful as a peg check rather than an NGN rate:
-
-```ts
-import { MexcProvider } from "cngn-rate-picker";
-
-new MexcProvider();                                           // USDTNGN, unlisted today
-new MexcProvider({ asset: "USDC", quote: "USDT" });            // USDCUSDT peg check
-new MexcProvider({ symbol: "USDCUSDT", price: "last" });       // /ticker/price
-new MexcProvider({ symbol: "USDCUSDT", price: "mid" });        // /ticker/bookTicker
 ```
 
 > `BlockradarProvider` requires an API key (`apiKey` option, sent as the
