@@ -20,7 +20,7 @@ test("parses bestRate and sends the api key header", async () => {
     );
   }) as typeof fetch;
 
-  const provider = new BlockradarProvider({ apiKey: "secret-key" });
+  const provider = new BlockradarProvider({ apiKey: "secret-key", price: "benchmark" });
   const quote = await provider.getUsdtPriceInNgn(fakeCtx(fetchImpl));
 
   assert.equal(quote.price, 1547.5);
@@ -35,7 +35,7 @@ test("throws when bestRate is null", async () => {
       { status: 200 },
     )) as typeof fetch;
 
-  const provider = new BlockradarProvider({ apiKey: "secret-key" });
+  const provider = new BlockradarProvider({ apiKey: "secret-key", price: "benchmark" });
   await assert.rejects(() => provider.getUsdtPriceInNgn(fakeCtx(fetchImpl)));
 });
 
@@ -43,6 +43,17 @@ test("throws on a non-2xx response", async () => {
   const fetchImpl = (async () =>
     new Response("unauthorized", { status: 401, statusText: "Unauthorized" })) as typeof fetch;
 
-  const provider = new BlockradarProvider({ apiKey: "bad-key" });
+  const provider = new BlockradarProvider({ apiKey: "bad-key", price: "benchmark" });
   await assert.rejects(() => provider.getUsdtPriceInNgn(fakeCtx(fetchImpl)));
+});
+
+test("the rates path also fails when every route 401s", async () => {
+  const fetchImpl = (async () =>
+    new Response("unauthorized", { status: 401, statusText: "Unauthorized" })) as typeof fetch;
+
+  const provider = new BlockradarProvider({ apiKey: "bad-key" });
+  await assert.rejects(
+    () => provider.getUsdtPriceInNgn(fakeCtx(fetchImpl)),
+    /no Blockradar rate routes available/,
+  );
 });

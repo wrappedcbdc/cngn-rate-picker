@@ -1,7 +1,7 @@
 import {
   ExchangeRatePicker,
   CoinGeckoProvider,
-  ExchangeRateApiProvider, QuidaxProvider,
+  ExchangeRateApiProvider, QuidaxProvider, BybitP2PProvider,
 } from "../src/index.js";
 
 // One picker = one market. Set `asset` and use providers configured for it —
@@ -11,7 +11,8 @@ const picker = new ExchangeRatePicker({
   providers: [
     new CoinGeckoProvider({ asset: "USDC" }), // usd-coin in NGN
     new ExchangeRateApiProvider(), // fiat-USD proxy — matches any USD stablecoin
-    new QuidaxProvider({ asset: "USDC" })
+    new QuidaxProvider({ asset: "USDC" }),
+    new BybitP2PProvider({ asset: "USDC" }),
     // market — as of July 2026 it only lists cngnusdt.
   ],
   threshold: 2,

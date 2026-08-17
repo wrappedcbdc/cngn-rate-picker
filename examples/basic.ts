@@ -2,16 +2,19 @@ import {
   ExchangeRatePicker,
   QuidaxProvider,
   CoinGeckoProvider,
-  ExchangeRateApiProvider,
+  ExchangeRateApiProvider, BybitP2PProvider, TextileProvider, BlockradarProvider, MexcProvider,
 } from "../src/index.js";
 
 const picker = new ExchangeRatePicker({
   providers: [
     new QuidaxProvider(),
+    new TextileProvider(),
+    new BybitP2PProvider(),
+    new MexcProvider(),
     new CoinGeckoProvider(),
     new ExchangeRateApiProvider()
   ],
-  threshold: 2,
+  threshold: 3,
   parallel: true,
   timeoutMs: 4000,
   onProviderError: (e) => console.warn("provider failed:", e.message),
