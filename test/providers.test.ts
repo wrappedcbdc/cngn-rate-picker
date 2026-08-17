@@ -1,9 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { QuidaxProvider } from "../src/providers/quidax.js";
-import { CoinGeckoProvider } from "../src/providers/coingecko.js";
 import { BlockradarProvider } from "../src/providers/blockradar.js";
-import { ExchangeRateApiProvider } from "../src/providers/exchangeRateApi.js";
 import { BybitP2PProvider } from "../src/providers/bybitP2P.js";
 import { TextileProvider } from "../src/providers/textile.js";
 import type { ProviderContext } from "../src/types.js";
@@ -158,111 +156,6 @@ test("QuidaxProvider still accepts a bare baseUrl string (legacy signature)", as
     fakeCtx(quidaxFetch([candle(0.000625, 30)], undefined, (u) => (url = u))),
   );
   assert.match(url, /^https:\/\/mock\.example\/api\/v1\//);
-});
-
-// --- CoinGecko ---------------------------------------------------------------
-
-/** A market_chart price point, `minutesAgo` before now. */
-function chartPoint(price: number, minutesAgo: number): [number, number] {
-  return [Date.now() - minutesAgo * 60_000, price];
-}
-
-/** Serves market_chart and simple/price off the same fake fetch. */
-function geckoFetch(
-  prices: unknown,
-  spot: unknown = { tether: { ngn: 1601 } },
-  capture?: (url: string) => void,
-): typeof fetch {
-  return (async (input: RequestInfo | URL) => {
-    const url = String(input);
-    capture?.(url);
-    const payload = url.includes("/market_chart") ? { prices } : spot;
-    return new Response(JSON.stringify(payload), { status: 200 });
-  }) as typeof fetch;
-}
-
-test("CoinGeckoProvider defaults to a TWAP of the market chart", async () => {
-  const urls: string[] = [];
-  // Kept clear of the window edge (see the Quidax TWAP test): 1600 for 30 min,
-  // then 1500 for 20.
-  const prices = [chartPoint(1600, 50), chartPoint(1500, 20)];
-  const provider = new CoinGeckoProvider();
-  const quote = await provider.getPriceInNgn(fakeCtx(geckoFetch(prices, undefined, (u) => urls.push(u))));
-
-  assert.equal(urls.length, 1); // no spot request when the chart has points
-  assert.match(urls[0]!, /coins\/tether\/market_chart\?vs_currency=ngn&days=1$/);
-  const expected = (1600 * 30 + 1500 * 20) / 50;
-  assert.ok(Math.abs(quote.price - expected) < 5, `expected ~${expected}, got ${quote.price}`);
-});
-
-test("CoinGeckoProvider ignores chart points outside the TWAP window", async () => {
-  // The 1000 print is 3h old; only the last hour should count.
-  const prices = [chartPoint(1000, 180), chartPoint(1600, 45), chartPoint(1600, 15)];
-  const provider = new CoinGeckoProvider();
-  const quote = await provider.getPriceInNgn(fakeCtx(geckoFetch(prices)));
-  assert.equal(quote.price, 1600);
-});
-
-test("CoinGeckoProvider maps USDC to the usd-coin id", async () => {
-  const urls: string[] = [];
-  const provider = new CoinGeckoProvider({ asset: "USDC" });
-  const quote = await provider.getPriceInNgn(
-    fakeCtx(geckoFetch([chartPoint(1598.2, 30)], undefined, (u) => urls.push(u))),
-  );
-  assert.match(urls[0]!, /coins\/usd-coin\/market_chart/);
-  assert.equal(quote.price, 1598.2);
-});
-
-test("CoinGeckoProvider falls back to the spot price on an empty window", async () => {
-  const urls: string[] = [];
-  const provider = new CoinGeckoProvider();
-  const quote = await provider.getPriceInNgn(fakeCtx(geckoFetch([], undefined, (u) => urls.push(u))));
-
-  assert.equal(quote.price, 1601);
-  assert.equal(urls.length, 2);
-  assert.match(urls[1]!, /simple\/price\?ids=tether&vs_currencies=ngn/);
-  assert.equal((quote.raw as { twapFellBackTo?: string }).twapFellBackTo, "spot");
-});
-
-test("CoinGeckoProvider twapFallback: false throws on an empty window", async () => {
-  const provider = new CoinGeckoProvider({ twapFallback: false });
-  await assert.rejects(
-    () => provider.getPriceInNgn(fakeCtx(geckoFetch([]))),
-    /has no points in the last 3600000ms/,
-  );
-});
-
-test("CoinGeckoProvider requests whole days to cover a longer window", async () => {
-  const urls: string[] = [];
-  const provider = new CoinGeckoProvider({ twapWindowMs: 36 * 3_600_000 });
-  await provider.getPriceInNgn(
-    fakeCtx(geckoFetch([chartPoint(1600, 30)], undefined, (u) => urls.push(u))),
-  );
-  assert.match(urls[0]!, /days=2$/);
-});
-
-test("CoinGeckoProvider price: spot reads simple/price, as before", async () => {
-  const urls: string[] = [];
-  const provider = new CoinGeckoProvider({ price: "spot" });
-  const quote = await provider.getPriceInNgn(
-    fakeCtx(jsonFetch({ tether: { ngn: 1601 } }, (u) => urls.push(u))),
-  );
-  assert.match(urls[0]!, /simple\/price\?ids=tether&vs_currencies=ngn/);
-  assert.equal(quote.price, 1601);
-});
-
-test("CoinGeckoProvider requires an explicit coinId for unknown assets", () => {
-  assert.throws(() => new CoinGeckoProvider({ asset: "PYUSD" }), /pass \{ coinId \}/);
-});
-
-test("CoinGeckoProvider uses a provided coinId for a new stablecoin", async () => {
-  const urls: string[] = [];
-  const provider = new CoinGeckoProvider({ asset: "PYUSD", coinId: "paypal-usd" });
-  const quote = await provider.getPriceInNgn(
-    fakeCtx(geckoFetch([chartPoint(1590, 20)], undefined, (u) => urls.push(u))),
-  );
-  assert.match(urls[0]!, /coins\/paypal-usd\/market_chart/);
-  assert.equal(quote.price, 1590);
 });
 
 // --- Blockradar --------------------------------------------------------------
@@ -749,13 +642,3 @@ test("TextileProvider throws when the ticker feed returns an empty array", async
   );
 });
 
-// --- ExchangeRate-API --------------------------------------------------------
-
-test("ExchangeRateApiProvider declares itself a fiat-USD proxy", async () => {
-  const provider = new ExchangeRateApiProvider();
-  assert.equal(provider.asset, "USD");
-  const quote = await provider.getPriceInNgn(
-    fakeCtx(jsonFetch({ result: "success", rates: { NGN: 1547.1 } })),
-  );
-  assert.equal(quote.price, 1547.1);
-});

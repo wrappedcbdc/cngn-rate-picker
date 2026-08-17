@@ -18,9 +18,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     stood. New options: `price` (`"twap"` default, `"spot"` for the previous
     ticker behaviour), `twapWindowMs` (default 1 h), `klinePeriodMinutes`
     (default 1), `maxStalenessMs` (default 6 h, `false` disables) and `invert`.
-  - `CoinGeckoProvider` averages `/coins/{id}/market_chart` (5-minute
-    granularity), falling back to `/simple/price` on an empty window. New
-    options: `price`, `twapWindowMs`, `twapFallback`.
 - `QuidaxProvider` **rejects a stale kline series** rather than quoting it.
   As of 2026-08-17 the reversed `cngnusdt` market has not traded in ~6 months
   (every candle zero-volume, its ticker still reporting ~1477 against ~1394 on
@@ -105,6 +102,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   absent" as "instant release" and silently passing the release-time filter.
   The documented endpoint does not return that field at all, so it is now
   treated as unknown and the criterion is skipped.
+
+### Removed
+
+- `CoinGeckoProvider` and `ExchangeRateApiProvider`. Both are gone from the
+  package, along with their exports (`CoinGeckoProviderOptions`,
+  `CoinGeckoPriceMode`), tests, and examples. `ExchangeRateApiProvider` was the
+  only built-in provider declaring `asset: "USD"`; the fiat-proxy mechanism
+  itself is unchanged and remains available to custom providers.
+- `MexcProvider`, added and removed before release. MEXC lists no NGN or cNGN
+  spot pair, so it could not satisfy the NGN-per-asset contract.
 
 ## [0.2.0] - 2026-07-16
 

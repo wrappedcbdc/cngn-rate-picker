@@ -1,8 +1,7 @@
 import {
   ExchangeRatePicker,
   QuidaxProvider,
-  CoinGeckoProvider,
-  ExchangeRateApiProvider, BybitP2PProvider, TextileProvider, BlockradarProvider,
+  BybitP2PProvider, TextileProvider, BlockradarProvider,
 } from "../src/index.js";
 
 const picker = new ExchangeRatePicker({
@@ -10,17 +9,15 @@ const picker = new ExchangeRatePicker({
     new QuidaxProvider(),
     new TextileProvider(),
     new BybitP2PProvider(),
-    new BlockradarProvider({apiKey: process.env.BLOCKRADAR_API_KEY!}),
-    new CoinGeckoProvider(),
-    new ExchangeRateApiProvider()
+    // new BlockradarProvider({apiKey: process.env.BLOCKRADAR_API_KEY!}),
   ],
-  threshold: 4,
+  threshold: 3,
   parallel: true,
   timeoutMs: 4000,
   onProviderError: (e) => console.warn("provider failed:", e.message),
 });
 
-const usdtToNgn = await picker.getUsdtToNgn();
+const usdtToNgn = await picker.getStablecoinToNgn();
 console.log(`1 USDT = ${usdtToNgn.rate.toFixed(2)} NGN`);
 for (const source of usdtToNgn.sources) {
   const marker = source.usedInAverage ? "*" : " ";

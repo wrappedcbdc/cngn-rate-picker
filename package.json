@@ -1,6 +1,6 @@
 {
   "name": "cngn-rate-picker",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Resilient cNGN <-> USD-stablecoin (USDT, USDC, and any future USD-backed coin) exchange rate library with multiple providers and automatic failover.",
   "repository": {
     "type": "git",

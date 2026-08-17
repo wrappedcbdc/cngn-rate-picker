@@ -1,21 +1,22 @@
 import {
   ExchangeRatePicker,
-  CoinGeckoProvider,
-  ExchangeRateApiProvider, QuidaxProvider, BybitP2PProvider,
+  QuidaxProvider,
+  BybitP2PProvider,
+  TextileProvider,
 } from "../src/index.js";
 
-// One picker = one market. Set `asset` and use providers configured for it —
+// One picker = one market. Set `asset` and use providers configured for it:
 // the picker refuses mismatched providers at construction time.
 const picker = new ExchangeRatePicker({
   asset: "USDC",
   providers: [
-    new CoinGeckoProvider({ asset: "USDC" }), // usd-coin in NGN
-    new ExchangeRateApiProvider(), // fiat-USD proxy — matches any USD stablecoin
-    new QuidaxProvider({ asset: "USDC" }),
-    new BybitP2PProvider({ asset: "USDC" }),
-    // market — as of July 2026 it only lists cngnusdt.
+    new TextileProvider({ asset: "USDC" }), // USDC_NGN corridor, TWAP of cleared trades
+    new QuidaxProvider({ asset: "USDC" }), // usdccngn market, if listed
+    new BybitP2PProvider({ asset: "USDC" }), // USDC/NGN P2P street rate
   ],
-  threshold: 2,
+  // USDC has thinner cNGN coverage than USDT, so require only one success
+  // rather than a quorum.
+  threshold: 1,
   parallel: true,
   timeoutMs: 4000,
   onProviderError: (e) => console.warn("provider failed:", e.message),
@@ -35,7 +36,7 @@ console.log(`50,000 NGN = ${fifty.amount.toFixed(2)} USDC`);
 // new ExchangeRatePicker({
 //   asset: "PYUSD",
 //   providers: [
-//     new CoinGeckoProvider({ asset: "PYUSD", coinId: "paypal-usd" }),
-//     new ExchangeRateApiProvider(),
+//     new TextileProvider({ asset: "PYUSD" }),
+//     new QuidaxProvider({ asset: "PYUSD", market: "pyusdcngn" }),
 //   ],
 // });

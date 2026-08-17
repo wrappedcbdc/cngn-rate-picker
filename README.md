@@ -45,9 +45,9 @@ average. Want both USDT and USDC rates? Create two pickers; they're cheap.
 const usdc = new ExchangeRatePicker({
   asset: "USDC",
   providers: [
+    new TextileProvider({ asset: "USDC" }),     // USDC_NGN corridor
     new QuidaxProvider({ asset: "USDC" }),      // cNGN/USDC market
-    new CoinGeckoProvider({ asset: "USDC" }),   // usd-coin price in NGN
-    new ExchangeRateApiProvider(),              // fiat-USD proxy, matches any picker
+    new BybitP2PProvider({ asset: "USDC" }),    // USDC/NGN P2P street rate
   ],
 });
 
@@ -61,15 +61,15 @@ Three rules make this safe and extensible:
    (default `"USDT"`). The picker throws **at construction** if a provider's
    asset doesn't match its own: a USDC provider can't silently poison a USDT
    average.
-2. **`"USD"` marks a fiat proxy.** A provider whose `asset` is `"USD"`
-   (e.g. `ExchangeRateApiProvider`, an official FX rate) is accepted by every
-   picker, on the assumption the stablecoin holds its peg.
+2. **`"USD"` marks a fiat proxy.** A provider whose `asset` is `"USD"` (an
+   official FX rate, say) is accepted by every picker, on the assumption the
+   stablecoin holds its peg. No built-in provider declares `"USD"` any more, so
+   the hook is there for your own.
 3. **New coins need no library update.** `asset` accepts any symbol
    (`"PYUSD"`, `"FDUSD"`, …); `"USDT"` and `"USDC"` merely get
    autocompletion. Point the built-in providers at the new market
    (`QuidaxProvider({ asset: "PYUSD", market: "..." })`,
-   `CoinGeckoProvider({ asset: "PYUSD", coinId: "paypal-usd" })`) or write a
-   tiny provider of your own.
+   `TextileProvider({ asset: "PYUSD" })`) or write a tiny provider of your own.
 
 > Quidax listings vary: the provider builds the market id as
 > `cngn<asset-lowercased>` (e.g. `cngnusdc`) and fails over cleanly if the
@@ -77,7 +77,7 @@ Three rules make this safe and extensible:
 > doesn't follow that pattern, and verify a market actually exists before
 > relying on it in production. As of July 2026 Quidax lists `cngnusdt` but
 > **not** `cngnusdc`, so a practical USDC picker today leans on
-> `CoinGeckoProvider({ asset: "USDC" })`, `ExchangeRateApiProvider`, and
+> `TextileProvider({ asset: "USDC" })` and
 > `BlockradarProvider({ apiKey, asset: "USDC" })`.
 
 ## Built-in providers
@@ -85,9 +85,7 @@ Three rules make this safe and extensible:
 | Provider | Source | Rate type | TWAP? | Assets | Key? |
 | --- | --- | --- | --- | --- | --- |
 | `QuidaxProvider` | Quidax cNGN/&lt;asset&gt; kline | Live crypto **market** rate | ✅ candle closes | Any listed market (`asset`/`market` options) | No |
-| `CoinGeckoProvider` | CoinGecko market chart | Aggregated market rate | ✅ 5-min chart points | USDT, USDC built in; others via `coinId` | No |
 | `TextileProvider` | Textile Credit FX feed (&lt;asset&gt;\_NGN corridor) | Live **order-book** venue rate | ✅ cleared trades | Any published corridor (`asset`/`tickerId` options) | No |
-| `ExchangeRateApiProvider` | open.er-api.com USD→NGN | **Official** rate (fiat-USD proxy) | ❌ no free history | Any USD stablecoin | No |
 | `BlockradarProvider` | Blockradar `/assets/rates` routes | Wallet-provider **settlement** rate (both directions averaged) | ❌ no history, cross-route average instead | Any listed asset (`asset` option) | Yes |
 | `BybitP2PProvider` | Bybit P2P &lt;asset&gt;/NGN ads | **Parallel/street** rate (fraud-filtered P2P mid) | ❌ see below | Any P2P-listed token (`asset` option) | Optional |
 
@@ -99,7 +97,7 @@ large print or a momentarily skewed book moves a spot quote far more than it
 moves the real clearing level, and the picker would bake that into a
 settlement rate.
 
-All three share one weighting rule (`timeWeightedAverage` in `src/twap.ts`,
+Both of them share one weighting rule (`timeWeightedAverage` in `src/twap.ts`,
 exported if you want it for your own provider): each observation is weighted by
 **how long it stood as the most recent one**, with the newest weighted up to
 now. That's the average of the stepwise-constant price series, so a dense burst
@@ -107,12 +105,10 @@ of prints can't outvote a price that actually held. Observations sharing a
 timestamp clamp to 1 ms so each still counts. Each provider takes
 `twapWindowMs` (default 1 hour) and a `price` option to opt back into spot.
 
-The three that *don't* TWAP can't, rather than don't:
+The two that *don't* TWAP can't, rather than don't:
 
-- **`ExchangeRateApiProvider`**: free `open.er-api.com` exposes no historical
-  endpoint, and averaging a rate that steps once a day returns the same number.
-- **`BlockradarProvider`**: the market-benchmark endpoint returns a single
-  scalar with no series behind it.
+- **`BlockradarProvider`**: neither of its endpoints exposes history, just a
+  scalar per route. It averages across routes instead of across time.
 - **`BybitP2PProvider`**: P2P ads are standing *quotes*, not executions, so
   there is no trade history to weight. Its median-filter-then-mode over current
   ads is the cross-sectional analogue, doing the job a TWAP would.
@@ -123,7 +119,7 @@ The three that *don't* TWAP can't, rather than don't:
 > each provider contributes one time-weighted number to that average.
 
 > **Choose your ordering deliberately.** In Nigeria the *official* rate can sit
-> well below the *crypto/parallel* rate. Put a market source (Quidax/CoinGecko)
+> well below the *crypto/parallel* rate. Put a market source (Quidax/Textile)
 > first so it's the one used whenever it succeeds, and treat the official rate
 > as a graceful-degradation choice for when it doesn't; otherwise your
 > numbers will silently drift from the street rate. Note that with the
@@ -159,22 +155,6 @@ new QuidaxProvider();                          // usdtcngn, 1h TWAP of candle cl
 new QuidaxProvider({ market: "usdtngn" });     // the NGN (not cNGN) market
 new QuidaxProvider({ price: "spot" });         // ticker `last`, pre-TWAP behaviour
 new QuidaxProvider({ maxStalenessMs: false }); // quote a dormant market anyway
-```
-
-> `CoinGeckoProvider` averages `/coins/{id}/market_chart`, which CoinGecko
-> serves at 5-minute granularity over a 1-day range. The endpoint takes whole
-> `days` rather than an arbitrary range on the free tier, so the provider
-> fetches enough days to cover `twapWindowMs` and windows the series itself:
-> a heavier payload than `/simple/price`, though still one request. An empty
-> window falls back to the instantaneous price (`twapFallback: false` to throw
-> instead), and `price: "spot"` skips the chart entirely.
-
-```ts
-import { CoinGeckoProvider } from "cngn-rate-picker";
-
-new CoinGeckoProvider();                     // tether/NGN, 1h TWAP
-new CoinGeckoProvider({ asset: "USDC" });    // usd-coin/NGN
-new CoinGeckoProvider({ price: "spot" });    // /simple/price, pre-TWAP behaviour
 ```
 
 > `BlockradarProvider` requires an API key (`apiKey` option, sent as the
@@ -278,8 +258,8 @@ new TextileProvider({ tickerId: "USDT_NGN" });     // explicit corridor override
 ```
 
 > Of the three TWAP providers this is the only one averaging *executions*:
-> Quidax averages candle closes and CoinGecko averages an aggregated index, so
-> Textile is the closest thing here to a true cleared-price rate.
+> Quidax averages candle closes, so Textile is the closest thing here to a
+> true cleared-price rate.
 
 ## Options
 
@@ -323,8 +303,8 @@ provider-priority order, get folded into the single rate you receive:
 const picker = new ExchangeRatePicker({
   providers: [
     new QuidaxProvider(),
-    new CoinGeckoProvider(),
-    new ExchangeRateApiProvider(),
+    new TextileProvider(),
+    new BybitP2PProvider(),
     new BlockradarProvider({ apiKey: process.env.BLOCKRADAR_API_KEY! }),
   ],
   threshold: 3, // TWAP the first 3 (by priority) that succeed; all 4 are queried either way
@@ -332,7 +312,7 @@ const picker = new ExchangeRatePicker({
 
 const rate = await picker.getUsdtToNgn();
 console.log(rate.rate);      // TWAP of the first 3 successes
-console.log(rate.provider);  // e.g. "quidax, coingecko, exchangerate-api"
+console.log(rate.provider);  // e.g. "quidax, textile, bybit-p2p"
 console.log(rate.sources);   // every provider's quote: { provider, price, raw, fetchedAt, usedInAverage }
 ```
 
@@ -451,8 +431,7 @@ This is the most common contribution. The checklist:
    and call `timeWeightedAverage` from `../twap.js` so every provider weights
    identically; take a `twapWindowMs` option and offer `price: "spot"` as the
    escape hatch. Only fall back to a spot value when the upstream genuinely has
-   no history; say so in the docs, as `ExchangeRateApiProvider` and
-   `BlockradarProvider` do. If the upstream can serve a dormant market, guard
+   no history; say so in the docs, as `BlockradarProvider` does. If the upstream can serve a dormant market, guard
    on staleness rather than averaging a months-old price.
 4. Export the class (and any options type) from `src/index.ts`.
 5. Add tests in `test/`. Tests must not hit the network: inject a fake
@@ -503,7 +482,7 @@ USD-backed stablecoin.
 
 Rates are sourced from third-party public endpoints and provided as-is for
 informational purposes. Verify against your settlement source before moving
-money. This project is not affiliated with Quidax, CoinGecko, Blockradar, or
+money. This project is not affiliated with Quidax, Textile, Blockradar, or
 any rate provider.
 
 ## License
